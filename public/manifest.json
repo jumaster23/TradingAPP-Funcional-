@@ -1,0 +1,19 @@
+{
+  "name": "Trading bot hibrido",
+  "short_name": "TradingBot",
+  "description": "Aplicacion web de analisis de trading para NYSE con modulos de probabilidades, day trading y swing.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0b1020",
+  "theme_color": "#0ea5e9",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

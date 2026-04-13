@@ -1,0 +1,47 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# ML artifacts
+model.pkl
+model.joblib
+*.joblib
+.ml-train-meta.json
+
+# Runtime data
+dataset.json
+ml-trade-dataset.csv
+
+# Logs
+logs/
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Build
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# IDE
+.vscode/
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+Thumbsdb
+
+# OS
+.DS_Store
+Thumbs.db
