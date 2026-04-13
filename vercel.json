@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": null,
+  "routes": [
+    {
+      "src": "/api/yahoo/(.*)",
+      "dest": "/api/yahoo.js"
+    },
+    {
+      "src": "/api/cboe/(.*)",
+      "dest": "/api/cboe.js"
+    },
+    {
+      "src": "/api/alpaca/(.*)",
+      "dest": "/api/alpaca.js"
+    }
+  ]
+}
