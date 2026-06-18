@@ -177,42 +177,6 @@ export default function IntradayModule({ data, risk }) {
                 {data.call_wall && <p className="text-emerald-400">Call Wall: ${data.call_wall?.toFixed(2)}</p>}
                 {data.gamma_level && <p className="text-cyan-400">Gamma: ${data.gamma_level?.toFixed(2)}</p>}
                 {data.put_wall && <p className="text-red-400">Put Wall: ${data.put_wall?.toFixed(2)}</p>}
-                {data.gamma_source && <p className="text-[9px] text-muted-foreground">Fuente: {String(data.gamma_source).toUpperCase()}</p>}
-                {data.gamma_calculation_mode && <p className="text-[9px] text-muted-foreground">Cálculo: {data.gamma_calculation_mode === 'near_open' ? 'Cerca apertura' : 'Institucional amplio'}</p>}
-                {data.strict_real_gamma != null && (
-                  <p className="text-[9px] text-muted-foreground">Solo gamma real: {data.strict_real_gamma ? 'ON' : 'OFF'}</p>
-                )}
-                {data.gamma_expiration_mode && <p className="text-[9px] text-muted-foreground">Modo: {data.gamma_expiration_mode}</p>}
-                {data.gamma_options_expiration && <p className="text-[9px] text-muted-foreground">Exp: {String(data.gamma_options_expiration)}</p>}
-                {data.gamma_level_near_open != null && data.gamma_level_institutional != null && (
-                  <p className="text-[9px] text-muted-foreground">
-                    Near open: ${Number(data.gamma_level_near_open).toFixed(2)} | Inst: ${Number(data.gamma_level_institutional).toFixed(2)}
-                  </p>
-                )}
-                {data.gamma_flip != null && <p className="text-[9px] text-amber-300">Gamma Flip: ${Number(data.gamma_flip).toFixed(2)}</p>}
-                {data.gex_total != null && (
-                  <p className={`text-[9px] ${Number(data.gex_total) >= 0 ? 'text-emerald-300' : 'text-red-300'}`}>
-                    GEX: {Number(data.gex_total).toLocaleString('en-US', { maximumFractionDigits: 0 })}
-                  </p>
-                )}
-                {data.gex_regime && <p className="text-[9px] text-muted-foreground">Regimen GEX: {String(data.gex_regime)}</p>}
-                {data.gex_market_mode && <p className="text-[9px] text-muted-foreground">Modo mercado: {String(data.gex_market_mode)}</p>}
-                {(data.gex_0dte != null || data.gex_ex_0dte != null) && (
-                  <p className="text-[9px] text-muted-foreground">
-                    0DTE: {data.gex_0dte != null ? Number(data.gex_0dte).toLocaleString('en-US', { maximumFractionDigits: 0 }) : 'N/A'} | ex-0DTE: {data.gex_ex_0dte != null ? Number(data.gex_ex_0dte).toLocaleString('en-US', { maximumFractionDigits: 0 }) : 'N/A'}
-                  </p>
-                )}
-                {(data.gex_direct_gamma_count != null || data.gex_estimated_gamma_count != null) && (
-                  <p className="text-[9px] text-muted-foreground">
-                    gamma directa: {data.gex_direct_gamma_count ?? 0} | estimada: {data.gex_estimated_gamma_count ?? 0}
-                  </p>
-                )}
-                {data.data_quality === 'LOW' && (
-                  <div className="mt-1.5 flex items-start gap-1 rounded bg-yellow-500/15 border border-yellow-400/40 px-2 py-1">
-                    <span className="text-yellow-400 text-[10px] font-semibold leading-tight">⚠ Calidad de datos BAJA</span>
-                    <span className="text-[9px] text-yellow-300/80 leading-tight">{data.data_quality_reason}</span>
-                  </div>
-                )}
               </div>
             </div>
           </div>

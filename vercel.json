@@ -3,18 +3,20 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": null,
+  "github": {
+    "enabled": false
+  },
   "routes": [
-    {
-      "src": "/api/yahoo/(.*)",
-      "dest": "/api/yahoo.js"
-    },
-    {
-      "src": "/api/cboe/(.*)",
-      "dest": "/api/cboe.js"
-    },
-    {
-      "src": "/api/alpaca/(.*)",
-      "dest": "/api/alpaca.js"
-    }
+    { "src": "/api/yahoo(.*)", "dest": "/api/yahoo" },
+    { "src": "/api/cboe(.*)", "dest": "/api/cboe" },
+    { "src": "/api/alpaca(.*)", "dest": "/api/alpaca" },
+    { "src": "/api/db/init", "dest": "/api/db/init" },
+    { "src": "/api/db/trades", "dest": "/api/db/trades" },
+    { "src": "/api/db/analyses", "dest": "/api/db/analyses" },
+    { "src": "/api/db/signals", "dest": "/api/db/signals" },
+    { "src": "/api/db/metrics", "dest": "/api/db/metrics" },
+    { "src": "/api/cron/scanner", "dest": "/api/cron/scanner" },
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/" }
   ]
 }

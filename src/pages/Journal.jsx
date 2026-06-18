@@ -1,15 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { base44 } from '../api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Button } from '@/components/ui/button';
+import { Input } from '../components/ui/input';
+import { Label } from '../components/ui/label';
+import { Button } from '../components/ui/button';
 import JournalCalendar from '../components/journal/JournalCalendar';
 import JournalStats from '../components/journal/JournalStats';
 import TradeEntryForm from '../components/journal/TradeEntryForm';
 import { toast } from 'sonner';
-import { hasBase44Config, isNotFoundError, getReadableError } from '@/lib/backendGuard';
-import { appendLabeledSampleToSimpleDataset, appendLabeledSamplesBatchToSimpleDataset, syncMlTradeSampleWithJournalEntry } from '@/lib/mlDataset';
+import { hasBase44Config, isNotFoundError, getReadableError } from '../lib/backendGuard';
+import { appendLabeledSampleToSimpleDataset, appendLabeledSamplesBatchToSimpleDataset, syncMlTradeSampleWithJournalEntry } from '../lib/mlDataset';
 
 export default function Journal() {
   const [currentMonth, setCurrentMonth] = useState(new Date());

@@ -78,7 +78,7 @@ function runSimplePredict(features) {
 
 // https://vite.dev/config/
 export default defineConfig({
-  logLevel: 'error', // Suppress warnings, only show errors
+  logLevel: 'info', // Show server info, URLs, and errors
   plugins: [
     react(),
     {
@@ -88,7 +88,6 @@ export default defineConfig({
           try {
             const reqUrl = new URL(req.url || '', 'http://localhost');
             const ticker = String(reqUrl.searchParams.get('ticker') || '').toUpperCase().trim();
-            const expiration = String(reqUrl.searchParams.get('expiration') || 'nearest').toLowerCase() === 'all' ? 'all' : 'nearest';
             if (!ticker) {
               res.statusCode = 400;
               res.setHeader('Content-Type', 'application/json');
@@ -118,7 +117,7 @@ export default defineConfig({
             const apiUrl = new URL('https://www.barchart.com/proxies/core-api/v1/options/get');
             apiUrl.searchParams.set('baseSymbol', ticker);
             apiUrl.searchParams.set('groupBy', 'optionType');
-            apiUrl.searchParams.set('expirationDate', expiration);
+            apiUrl.searchParams.set('expirationDate', 'nearest');
             apiUrl.searchParams.set('orderBy', 'strikePrice');
             apiUrl.searchParams.set('orderDir', 'asc');
             apiUrl.searchParams.set('meta', 'field.shortName,expirations');
@@ -305,12 +304,17 @@ export default defineConfig({
     },
   },
   server: {
+    port: 5174,
     proxy: {
       '/api/yahoo': {
         target: 'https://query1.finance.yahoo.com',
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api\/yahoo/, ''),
         headers: { 'User-Agent': 'Mozilla/5.0' },
+      },
+      '/api/price/yahoo': {
+        target: 'http://localhost:4173',
+        changeOrigin: true,
       },
       '/api/cboe': {
         target: 'https://cdn.cboe.com',

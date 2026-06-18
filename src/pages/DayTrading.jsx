@@ -7,7 +7,7 @@ import StructurePatterns from '../components/daytrading/StructurePatterns';
 import RiskRulesModule from '../components/daytrading/RiskRulesModule';
 import NoTradeAlert from '../components/daytrading/NoTradeAlert';
 import TradingHours from '../components/daytrading/TradingHours';
-import { base44 } from '@/api/base44Client';
+import { base44 } from '../api/base44Client';
 import { toast } from 'sonner';
 import DayTradingChart from '../components/daytrading/DayTradingChart';
 import ChartErrorBoundary from '../components/daytrading/ChartErrorBoundary';
@@ -15,10 +15,10 @@ import LivePriceBadge from '../components/trading/LivePriceBadge';
 import ConsensusPanel from '../components/trading/ConsensusPanel';
 import TradeLevels from '../components/trading/TradeLevels';
 import ProbabilityBar from '../components/trading/ProbabilityBar';
-import { useLivePrice } from '@/hooks/useLivePrice';
-import { hasBase44Config, getBase44ConfigError, isNotFoundError, getReadableError } from '@/lib/backendGuard';
-import { appendSignalLogsBatchToSimpleDataset, inferMlProbabilityFromPayload, upsertMlTradeSampleFromAnalysis } from '@/lib/mlDataset';
-import { saveSignalsFromAnalysis } from '@/lib/signalLog';
+import { useLivePrice } from '../hooks/useLivePrice';
+import { hasBase44Config, getBase44ConfigError, isNotFoundError, getReadableError } from '../lib/backendGuard';
+import { appendSignalLogsBatchToSimpleDataset, inferMlProbabilityFromPayload, upsertMlTradeSampleFromAnalysis } from '../lib/mlDataset';
+import { saveSignalsFromAnalysis } from '../lib/signalLog';
 
 const scalpSchema = {
   type: 'object',
@@ -766,9 +766,6 @@ export default function DayTrading({ liveOnly = false, autoRefreshMs = 0 }) {
   const [nextRefreshAt, setNextRefreshAt] = useState(null);
   const [showBacktest, setShowBacktest] = useState(false);
   const [withPremarket, setWithPremarket] = useState(false);
-  const [gammaExpirationMode, setGammaExpirationMode] = useState('nearest');
-  const [gammaCalculationMode, setGammaCalculationMode] = useState('institutional');
-  const [gammaStrictReal, setGammaStrictReal] = useState(false);
   const runAnalysisRef = useRef(null);
   const tickerRef = useRef(ticker);
   const isLoadingRef = useRef(isLoading);
@@ -983,12 +980,7 @@ Actualizado: ${lp.lastUpdated?.toLocaleTimeString() ?? now}
         const fetches = [
           base44.functions.invoke('getIntradayData', { ticker: t }),
           base44.functions.invoke('getVix', {}),
-          base44.functions.invoke('getGammaOI', {
-            ticker: t,
-            expiration_mode: gammaExpirationMode,
-            gamma_calculation_mode: gammaCalculationMode,
-            strict_real_gamma: gammaStrictReal,
-          }),
+          base44.functions.invoke('getGammaOI', { ticker: t }),
           base44.entities.TickerStats.filter({ ticker: t }),
           base44.functions.invoke('getStockPrice', { ticker: 'SPY' }),
           base44.functions.invoke('getStockPrice', { ticker: 'NQ=F' }),
@@ -1275,10 +1267,9 @@ Ajuste probabilidades ORB: ${vd.orb_probability_adjustment > 0 ? '+' : ''}${vd.o
             else gammaPos = `ENTRE walls, más cerca de put_wall (${(((price - gd.put_wall) / range) * 100).toFixed(0)}% del rango) → soporte cercano`;
           }
           contextHint += `
-GAMMA/OI REAL (${String(gd.source || 'desconocido').toUpperCase()} — USA ESTOS VALORES EXACTOS):
+GAMMA/OI REAL (CBOE — USA ESTOS VALORES EXACTOS):
 call_wall=${gd.call_wall}, put_wall=${gd.put_wall}, gamma_level=${gd.gamma_level}, max_pain=${gd.max_pain}
 put_call_ratio=${gd.put_call_ratio}, oi_call_dominant=${gd.oi_call_dominant}, strikes_analyzed=${gd.strikes_analyzed}
-fuente=${gd.source || 'N/A'}, modo_gamma=${gd.gamma_calculation_mode || gammaCalculationMode}, strict_real_gamma=${gd.strict_real_gamma ? 'true' : 'false'}, expiracion_solicitada=${gd.requested_expiration_mode || gammaExpirationMode}, options_expiration=${gd.options_expiration || 'N/A'}
 Posición del precio: ${gammaPos}
 REGLAS DE RIESGO GAMMA:
 - Entry CALL: NO entrar si precio está a menos de 0.3% del call_wall (resistencia magnética). Esperar ruptura con volumen.
@@ -1734,71 +1725,11 @@ REGLA: Si ninguna condición aplica, devuelve alerts=[] (array vacío). No inven
         if (gd.call_wall)   result.scalp.call_wall   = gd.call_wall;
         if (gd.put_wall)    result.scalp.put_wall    = gd.put_wall;
         if (gd.gamma_level) result.scalp.gamma_level = gd.gamma_level;
-        result.scalp.gamma_source = gd.source || null;
-        result.scalp.gamma_options_expiration = gd.options_expiration || null;
-        result.scalp.gamma_expiration_mode = gd.requested_expiration_mode || gammaExpirationMode;
-        result.scalp.gamma_calculation_mode = gd.gamma_calculation_mode || gammaCalculationMode;
-        result.scalp.strict_real_gamma = !!gd.strict_real_gamma;
-        result.scalp.call_wall_institutional = gd.call_wall_institutional ?? null;
-        result.scalp.put_wall_institutional = gd.put_wall_institutional ?? null;
-        result.scalp.gamma_level_institutional = gd.gamma_level_institutional ?? null;
-        result.scalp.call_wall_near_open = gd.call_wall_near_open ?? null;
-        result.scalp.put_wall_near_open = gd.put_wall_near_open ?? null;
-        result.scalp.gamma_level_near_open = gd.gamma_level_near_open ?? null;
-        result.scalp.gamma_flip = gd.gamma_flip ?? null;
-        result.scalp.gex_total = gd.gex_total ?? null;
-        result.scalp.gex_regime = gd.gex_regime ?? null;
-        result.scalp.gex_market_mode = gd.gex_market_mode ?? null;
-        result.scalp.vol_gex = gd.vol_gex ?? null;
-        result.scalp.delta_exposure = gd.delta_exposure ?? null;
-        result.scalp.gex_0dte = gd.gex_0dte ?? null;
-        result.scalp.gex_ex_0dte = gd.gex_ex_0dte ?? null;
-        result.scalp.gex_estimated_gamma_count = gd.gex_estimated_gamma_count ?? null;
-        result.scalp.gex_direct_gamma_count = gd.gex_direct_gamma_count ?? null;
         result.scalp.max_pain = gd.max_pain;
         if (gd.call_wall)   result.intraday.call_wall   = gd.call_wall;
         if (gd.put_wall)    result.intraday.put_wall    = gd.put_wall;
         if (gd.gamma_level) result.intraday.gamma_level = gd.gamma_level;
-        result.intraday.gamma_source = gd.source || null;
-        result.intraday.gamma_options_expiration = gd.options_expiration || null;
-        result.intraday.gamma_expiration_mode = gd.requested_expiration_mode || gammaExpirationMode;
-        result.intraday.gamma_calculation_mode = gd.gamma_calculation_mode || gammaCalculationMode;
-        result.intraday.strict_real_gamma = !!gd.strict_real_gamma;
-        result.intraday.call_wall_institutional = gd.call_wall_institutional ?? null;
-        result.intraday.put_wall_institutional = gd.put_wall_institutional ?? null;
-        result.intraday.gamma_level_institutional = gd.gamma_level_institutional ?? null;
-        result.intraday.call_wall_near_open = gd.call_wall_near_open ?? null;
-        result.intraday.put_wall_near_open = gd.put_wall_near_open ?? null;
-        result.intraday.gamma_level_near_open = gd.gamma_level_near_open ?? null;
-        result.intraday.gamma_flip = gd.gamma_flip ?? null;
-        result.intraday.gex_total = gd.gex_total ?? null;
-        result.intraday.gex_regime = gd.gex_regime ?? null;
-        result.intraday.gex_market_mode = gd.gex_market_mode ?? null;
-        result.intraday.vol_gex = gd.vol_gex ?? null;
-        result.intraday.delta_exposure = gd.delta_exposure ?? null;
-        result.intraday.gex_0dte = gd.gex_0dte ?? null;
-        result.intraday.gex_ex_0dte = gd.gex_ex_0dte ?? null;
-        result.intraday.gex_estimated_gamma_count = gd.gex_estimated_gamma_count ?? null;
-        result.intraday.gex_direct_gamma_count = gd.gex_direct_gamma_count ?? null;
         result.intraday.max_pain = gd.max_pain;
-
-        // Validación de calidad: solo gamma real activo con datos insuficientes
-        const GEX_MIN_DIRECT = 5;
-        const directCount = gd.gex_direct_gamma_count ?? 0;
-        if (gd.strict_real_gamma && directCount < GEX_MIN_DIRECT) {
-          result.scalp.data_quality = 'LOW';
-          result.intraday.data_quality = 'LOW';
-          result.scalp.data_quality_reason = `Solo gamma real ON pero solo ${directCount} contratos con gamma directa (mínimo ${GEX_MIN_DIRECT}). GEX poco confiable.`;
-          result.intraday.data_quality_reason = result.scalp.data_quality_reason;
-          // Penalizar success_prob en scalp
-          if (Number.isFinite(Number(result.scalp.success_prob))) {
-            result.scalp.success_prob = Math.max(0, Number(result.scalp.success_prob) - 12);
-          }
-          // Penalizar success_prob en intraday
-          if (Number.isFinite(Number(result.intraday.success_prob))) {
-            result.intraday.success_prob = Math.max(0, Number(result.intraday.success_prob) - 12);
-          }
-        }
       }
 
       // Override premarket con datos reales de Yahoo (siempre disponibles si existen)
@@ -3999,7 +3930,7 @@ REGLA: Si ninguna condición aplica, devuelve alerts=[] (array vacío). No inven
       {!liveOnly && <TradingHours />}
 
       {/* Premarket Toggle */}
-      {!liveOnly && <div className="flex items-center gap-3 px-1 flex-wrap">
+      {!liveOnly && <div className="flex items-center gap-3 px-1">
         <button
           onClick={() => setWithPremarket(!withPremarket)}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-all ${
@@ -4014,38 +3945,6 @@ REGLA: Si ninguna condición aplica, devuelve alerts=[] (array vacío). No inven
         <span className="text-xs text-muted-foreground">
           {withPremarket ? 'Se incluyen datos de sesión premarket en el análisis' : 'Solo sesión regular (9:30 AM – 4:00 PM ET)'}
         </span>
-
-        <div className="flex items-center gap-2 ml-auto">
-          <label className="text-xs text-muted-foreground">Gamma cálculo</label>
-          <select
-            value={gammaCalculationMode}
-            onChange={(e) => setGammaCalculationMode(e.target.value === 'near_open' ? 'near_open' : 'institutional')}
-            className="h-9 rounded-lg border border-border/60 bg-secondary px-2 text-xs text-foreground"
-          >
-            <option value="institutional">Institucional amplio</option>
-            <option value="near_open">Cerca apertura</option>
-          </select>
-
-          <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={gammaStrictReal}
-              onChange={(e) => setGammaStrictReal(Boolean(e.target.checked))}
-              className="h-4 w-4 rounded border-border/70 bg-secondary"
-            />
-            Solo gamma real
-          </label>
-
-          <label className="text-xs text-muted-foreground">Gamma expiración</label>
-          <select
-            value={gammaExpirationMode}
-            onChange={(e) => setGammaExpirationMode(e.target.value === 'all' ? 'all' : 'nearest')}
-            className="h-9 rounded-lg border border-border/60 bg-secondary px-2 text-xs text-foreground"
-          >
-            <option value="nearest">Nearest</option>
-            <option value="all">All</option>
-          </select>
-        </div>
       </div>}
 
       {isLoading && (

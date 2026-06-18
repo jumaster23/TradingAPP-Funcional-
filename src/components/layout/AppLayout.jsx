@@ -1,11 +1,16 @@
 import React from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { BarChart3, TrendingUp, Newspaper, Waves, Building2, Settings, BookOpen, BookMarked, Radio } from 'lucide-react';
+import { BarChart3, TrendingUp, Newspaper, Waves, Building2, Settings, BookOpen, BookMarked, Radio, Zap, History, Target, Brain, Activity } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const tabs = [
   { path: '/Probabilities', label: 'Probabilidades', icon: BarChart3 },
+  { path: '/LiveDashboard', label: 'Señales', icon: Activity },
   { path: '/Live', label: 'Live', icon: Radio },
+  { path: '/Live2', label: 'Live 2.0', icon: Zap },
+  { path: '/Live3', label: 'Live 3.0', icon: Target },
+  { path: '/Live4', label: 'Live 4.0', icon: Brain },
+  { path: '/Backtest', label: 'Backtest', icon: History },
   { path: '/DayTrading', label: 'Day Trading', icon: TrendingUp },
   { path: '/News', label: 'Noticias', icon: Newspaper },
   { path: '/Swing', label: 'Swing', icon: Waves },

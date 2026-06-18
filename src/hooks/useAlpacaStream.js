@@ -171,8 +171,6 @@ export function useAlpacaStream() {
   const [status, setStatus] = useState('idle'); // idle | loading | connected | error
   const [currentTicker, setCurrentTicker] = useState(null);
   const wsRef = useRef(null);
-  const fallbackPollingRef = useRef(null);
-  const manualDisconnectRef = useRef(false);
   const barsRef = useRef([]);
   const velaActualRef = useRef(null);
 
@@ -201,81 +199,12 @@ export function useAlpacaStream() {
     }
   }, [updateBars]);
 
-  const clearFallbackPolling = useCallback(() => {
-    if (fallbackPollingRef.current) {
-      clearInterval(fallbackPollingRef.current);
-      fallbackPollingRef.current = null;
-    }
-  }, []);
-
-  const ingestTick = useCallback((precio, volumen = 0) => {
-    const p = Number(precio);
-    if (!Number.isFinite(p) || p <= 0) return;
-    const ahora = Date.now();
-
-    if (!velaActualRef.current) {
-      // Primera vela: abrir
-      velaActualRef.current = nuevaVela(p, volumen);
-      const { _inicio, ...snapshot } = velaActualRef.current;
-      setLiveCandle(snapshot);
-      return;
-    }
-
-    if (ahora - velaActualRef.current._inicio >= DURACION_MS) {
-      // Tiempo expirado: cerrar vela y empujar al historial
-      const { _inicio, ...velaFinal } = velaActualRef.current;
-      const currentBars = barsRef.current;
-      currentBars.push(velaFinal);
-      if (currentBars.length > 300) currentBars.shift();
-
-      // Abrir nueva vela con el tick actual
-      velaActualRef.current = nuevaVela(p, volumen);
-      const { _inicio: _newStart, ...snapshotNueva } = velaActualRef.current;
-      setLiveCandle(snapshotNueva);
-      updateBars([...currentBars]);
-      return;
-    }
-
-    // Dentro de la vela: actualizar OHLCV
-    actualizarVela(velaActualRef.current, p, volumen);
-    // Snapshot en tiempo real sin afectar historial cerrado
-    const { _inicio, ...snapshot } = velaActualRef.current;
-    const currentBars = barsRef.current;
-    const preview = [...currentBars, snapshot];
-    setLiveCandle(snapshot);
-    setBars(preview);
-    setMetrics(computeMetrics(preview));
-  }, [updateBars]);
-
-  const startFallbackPolling = useCallback((ticker) => {
-    clearFallbackPolling();
-    setStatus('connected');
-
-    const pollPrice = async () => {
-      try {
-        const res = await base44.functions.invoke('getStockPrice', { ticker });
-        const d = res?.data;
-        if (d?.current_price != null) {
-          ingestTick(d.current_price, 0);
-        }
-      } catch (_) {
-        // ignore polling errors to keep stream resilient
-      }
-    };
-
-    pollPrice();
-    fallbackPollingRef.current = setInterval(pollPrice, 2000);
-  }, [clearFallbackPolling, ingestTick]);
-
   const connect = useCallback(async (ticker, timeframe = '5Min') => {
-    manualDisconnectRef.current = false;
-
     // Close existing connection
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
     }
-    clearFallbackPolling();
 
     setCurrentTicker(ticker);
     barsRef.current = [];
@@ -287,16 +216,6 @@ export function useAlpacaStream() {
     // Fetch historical bars first
     await fetchHistorical(ticker, timeframe);
 
-    const key = import.meta.env.VITE_ALPACA_API_KEY;
-    const secret = import.meta.env.VITE_ALPACA_SECRET_KEY;
-    const hasAlpacaAuth = !!(key && secret);
-
-    // Sin credenciales Alpaca: construir velas propias desde precio en vivo
-    if (!hasAlpacaAuth) {
-      startFallbackPolling(ticker);
-      return;
-    }
-
     // Connect Alpaca WebSocket (IEX feed — requiere auth)
     try {
       const ws = new WebSocket('wss://stream.data.alpaca.markets/v2/iex');
@@ -304,7 +223,14 @@ export function useAlpacaStream() {
 
       ws.onopen = () => {
         // Iniciar flujo de autenticación
-        ws.send(JSON.stringify({ action: 'auth', key, secret }));
+        const key    = import.meta.env.VITE_ALPACA_API_KEY;
+        const secret = import.meta.env.VITE_ALPACA_SECRET_KEY;
+        if (key && secret) {
+          ws.send(JSON.stringify({ action: 'auth', key, secret }));
+        } else {
+          // Sin credenciales — suscribir de todas formas (fallará silenciosamente)
+          ws.send(JSON.stringify({ action: 'subscribe', trades: [ticker] }));
+        }
       };
 
       ws.onmessage = (e) => {
@@ -313,7 +239,11 @@ export function useAlpacaStream() {
           messages.forEach(msg => {
             // ── Auth flow ─────────────────────────────────────────────────
             if (msg.T === 'connected') {
-              ws.send(JSON.stringify({ action: 'auth', key, secret }));
+              const key    = import.meta.env.VITE_ALPACA_API_KEY;
+              const secret = import.meta.env.VITE_ALPACA_SECRET_KEY;
+              if (key && secret) {
+                ws.send(JSON.stringify({ action: 'auth', key, secret }));
+              }
             }
             if (msg.T === 'success' && msg.msg === 'authenticated') {
               ws.send(JSON.stringify({ action: 'subscribe', trades: [ticker] }));
@@ -321,37 +251,54 @@ export function useAlpacaStream() {
             }
             if (msg.T === 'error') {
               setStatus('error');
-              startFallbackPolling(ticker);
             }
 
             // ── Tick → Vela propia ────────────────────────────────────────
             if (msg.T === 't' && msg.S === ticker) {
-              const precio = msg.p;
-              const volumen = msg.s || 0;
-              ingestTick(precio, volumen);
+              const precio  = msg.p;            // precio del trade
+              const volumen = msg.s || 0;        // tamaño del trade
+              const ahora   = Date.now();
+
+              if (!velaActualRef.current) {
+                // Primera vela: abrir
+                velaActualRef.current = nuevaVela(precio, volumen);
+                const { _inicio, ...snapshot } = velaActualRef.current;
+                setLiveCandle(snapshot);
+              } else if (ahora - velaActualRef.current._inicio >= DURACION_MS) {
+                // Tiempo expirado: cerrar vela y empujar al historial
+                const { _inicio, ...velaFinal } = velaActualRef.current;
+                const currentBars = barsRef.current;
+                currentBars.push(velaFinal);
+                if (currentBars.length > 300) currentBars.shift();
+                // Abrir nueva vela con el tick actual
+                velaActualRef.current = nuevaVela(precio, volumen);
+                const { _inicio: _newStart, ...snapshotNueva } = velaActualRef.current;
+                setLiveCandle(snapshotNueva);
+                updateBars([...currentBars]);
+              } else {
+                // Dentro de la vela: actualizar OHLCV
+                actualizarVela(velaActualRef.current, precio, volumen);
+                // Snapshot en tiempo real sin afectar historial cerrado
+                const { _inicio, ...snapshot } = velaActualRef.current;
+                const currentBars = barsRef.current;
+                const preview = [...currentBars, snapshot];
+                setLiveCandle(snapshot);
+                setBars(preview);
+                setMetrics(computeMetrics(preview));
+              }
             }
           });
         } catch (_) { /* ignore */ }
       };
 
-      ws.onerror = () => {
-        setStatus('error');
-        startFallbackPolling(ticker);
-      };
-      ws.onclose = () => {
-        if (!manualDisconnectRef.current) {
-          startFallbackPolling(ticker);
-        }
-      };
+      ws.onerror = () => setStatus('error');
+      ws.onclose = () => {};
     } catch (_) {
-      // WebSocket failed silently — fallback to polling live price
-      startFallbackPolling(ticker);
+      // WebSocket failed silently — historical data still shown
     }
-  }, [clearFallbackPolling, fetchHistorical, ingestTick, startFallbackPolling]);
+  }, [fetchHistorical, updateBars]);
 
   const disconnect = useCallback(() => {
-    manualDisconnectRef.current = true;
-    clearFallbackPolling();
     try {
       if (wsRef.current) {
         wsRef.current.close?.();
@@ -360,7 +307,7 @@ export function useAlpacaStream() {
     } catch (_) {}
     setStatus('idle');
     setLiveCandle(null);
-  }, [clearFallbackPolling]);
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {

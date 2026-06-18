@@ -87,181 +87,6 @@ function toNum(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function toLooseNumber(value) {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  if (typeof value === 'string') {
-    const normalized = value.replace(/,/g, '').trim();
-    if (!normalized) return null;
-    const parsed = Number(normalized);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function parseOccExpiryFromSymbol(symbol) {
-  const s = String(symbol || '');
-  const m = s.match(/(\d{6})[CP]/i);
-  if (!m) return null;
-  const yy = Number(m[1].slice(0, 2));
-  const mm = Number(m[1].slice(2, 4));
-  const dd = Number(m[1].slice(4, 6));
-  if (!yy || !mm || !dd) return null;
-  const year = 2000 + yy;
-  const dt = new Date(Date.UTC(year, mm - 1, dd, 20, 0, 0));
-  return Number.isNaN(dt.getTime()) ? null : dt;
-}
-
-function pickOptionGamma(opt, spotPrice, strictRealGamma = false) {
-  const direct = toLooseNumber(opt?.gamma)
-    ?? toLooseNumber(opt?.greeks?.gamma)
-    ?? toLooseNumber(opt?.optionGreeks?.gamma)
-    ?? toLooseNumber(opt?.gamma_value);
-  if (direct != null && direct >= 0) return { gamma: direct, estimated: false };
-  if (strictRealGamma) return { gamma: null, estimated: true };
-
-  const strike = toLooseNumber(opt?.strike_price ?? opt?.strike);
-  const iv = toLooseNumber(opt?.impliedVolatility)
-    ?? toLooseNumber(opt?.iv)
-    ?? toLooseNumber(opt?.volatility)
-    ?? 0.25;
-  const spot = toLooseNumber(spotPrice);
-  if (!strike || !spot || spot <= 0) return { gamma: null, estimated: true };
-
-  const moneyness = Math.abs((strike - spot) / spot);
-  const nearAtmFactor = Math.exp(-Math.pow(moneyness / 0.12, 2));
-  const ivFactor = Math.max(0.2, Math.min(2, (iv || 0.25) / 0.25));
-  const proxyGamma = 0.01 * nearAtmFactor * ivFactor;
-  return { gamma: Number(proxyGamma.toFixed(6)), estimated: true };
-}
-
-function getWallsFromOptionRows(optionRows = []) {
-  const callOI = {};
-  const putOI = {};
-  optionRows.forEach((opt) => {
-    const type = String(opt?.type || '').toLowerCase();
-    const code = String(opt?.option || '');
-    const isCall = type === 'call' || type === 'c' || /C\d{6,}/.test(code);
-    const isPut = type === 'put' || type === 'p' || /P\d{6,}/.test(code);
-    const strike = toLooseNumber(opt?.strike_price ?? opt?.strike);
-    const oi = toLooseNumber(opt?.open_interest);
-    if (!strike || !oi) return;
-    if (isCall) callOI[strike] = (callOI[strike] || 0) + oi;
-    if (isPut) putOI[strike] = (putOI[strike] || 0) + oi;
-  });
-
-  const callKeys = Object.keys(callOI);
-  const putKeys = Object.keys(putOI);
-  const callWall = callKeys.length
-    ? Number(callKeys.reduce((a, b) => (callOI[a] > callOI[b] ? a : b)))
-    : null;
-  const putWall = putKeys.length
-    ? Number(putKeys.reduce((a, b) => (putOI[a] > putOI[b] ? a : b)))
-    : null;
-  return { callWall, putWall };
-}
-
-function calculateInstitutionalGex(optionRows = [], spotPrice, strictRealGamma = false) {
-  const spot = toLooseNumber(spotPrice);
-  if (!spot || spot <= 0) {
-    return {
-      totalGex: null,
-      volGex: null,
-      deltaExposure: null,
-      gexByStrike: {},
-      gammaFlip: null,
-      cumulativeByStrike: {},
-      gexEstimatedCount: 0,
-      gexDirectCount: 0,
-      gex0dte: null,
-      gexEx0dte: null,
-    };
-  }
-
-  let totalGex = 0;
-  let volGex = 0;
-  let deltaExposure = 0;
-  let gexEstimatedCount = 0;
-  let gexDirectCount = 0;
-  let gex0dte = 0;
-  let gexEx0dte = 0;
-  const gexByStrikeMap = {};
-
-  const now = Date.now();
-  const endOfTodayUtc = new Date();
-  endOfTodayUtc.setUTCHours(23, 59, 59, 999);
-
-  optionRows.forEach((opt) => {
-    const strike = toLooseNumber(opt?.strike_price ?? opt?.strike);
-    const oi = toLooseNumber(opt?.open_interest);
-    if (!strike || !oi) return;
-
-    const type = String(opt?.type || '').toLowerCase();
-    const code = String(opt?.option || '');
-    const isPut = type === 'put' || type === 'p' || /P\d{6,}/.test(code);
-    const isCall = type === 'call' || type === 'c' || /C\d{6,}/.test(code);
-    if (!isPut && !isCall) return;
-
-    const { gamma, estimated } = pickOptionGamma(opt, spot, strictRealGamma);
-    if (gamma == null) return;
-
-    let gex = gamma * oi * 100 * spot * spot;
-    if (isPut) gex *= -1;
-    totalGex += gex;
-
-    const iv = toLooseNumber(opt?.impliedVolatility)
-      ?? toLooseNumber(opt?.iv)
-      ?? toLooseNumber(opt?.volatility)
-      ?? 0.25;
-    volGex += gex * iv;
-
-    let delta = toLooseNumber(opt?.delta)
-      ?? toLooseNumber(opt?.greeks?.delta)
-      ?? toLooseNumber(opt?.optionGreeks?.delta)
-      ?? null;
-    if (delta == null) {
-      const m = (strike - spot) / spot;
-      delta = isCall ? (m <= 0 ? 0.6 : 0.35) : (m >= 0 ? -0.6 : -0.35);
-    }
-    deltaExposure += delta * oi * 100 * spot;
-
-    const key = Number(strike).toFixed(2);
-    gexByStrikeMap[key] = (gexByStrikeMap[key] || 0) + gex;
-
-    if (estimated) gexEstimatedCount += 1;
-    else gexDirectCount += 1;
-
-    const expiry = parseOccExpiryFromSymbol(opt?.option);
-    if (expiry) {
-      if (expiry.getTime() >= now && expiry.getTime() <= endOfTodayUtc.getTime()) gex0dte += gex;
-      else gexEx0dte += gex;
-    }
-  });
-
-  const sortedStrikes = Object.keys(gexByStrikeMap).map(Number).sort((a, b) => a - b);
-  let cumulative = 0;
-  let gammaFlip = null;
-  const cumulativeByStrike = {};
-  sortedStrikes.forEach((s) => {
-    const k = Number(s).toFixed(2);
-    cumulative += gexByStrikeMap[k] || 0;
-    cumulativeByStrike[k] = cumulative;
-    if (gammaFlip == null && cumulative > 0) gammaFlip = Number(s);
-  });
-
-  return {
-    totalGex: Number(totalGex.toFixed(2)),
-    volGex: Number(volGex.toFixed(2)),
-    deltaExposure: Number(deltaExposure.toFixed(2)),
-    gexByStrike: gexByStrikeMap,
-    gammaFlip,
-    cumulativeByStrike,
-    gexEstimatedCount,
-    gexDirectCount,
-    gex0dte: Number(gex0dte.toFixed(2)),
-    gexEx0dte: Number(gexEx0dte.toFixed(2)),
-  };
-}
-
 function getEtParts(unixSeconds) {
   const d = new Date(unixSeconds * 1000);
   const f = new Intl.DateTimeFormat('en-US', {
@@ -393,7 +218,7 @@ function calcBollingerBands(closes, period = 20, mult = 2) {
 }
 
 async function fetchYahooChart(ticker, interval, range, includePrePost = false) {
-  let url = `/api/yahoo/v8/finance/chart/${encodeURIComponent(ticker)}?interval=${interval}&range=${range}`;
+  let url = `/api/yahoo/chart/${encodeURIComponent(ticker)}?interval=${interval}&range=${range}`;
   if (includePrePost) url += '&includePrePost=true';
   const json = await fetchJson(url, {
     headers: { Accept: 'application/json' },
@@ -929,17 +754,10 @@ async function invokeGetVix() {
   };
 }
 
-async function invokeGetGammaOI({ ticker, force_refresh, forceRefresh, expiration_mode, expirationMode, gamma_calculation_mode, gammaCalculationMode, strict_real_gamma, strictRealGamma } = {}) {
+async function invokeGetGammaOI({ ticker, force_refresh, forceRefresh } = {}) {
   const t = String(ticker || '').toUpperCase();
   if (!t) throw new Error('Ticker requerido');
   const force = Boolean(force_refresh || forceRefresh);
-  const requestedExpirationMode = String(expiration_mode || expirationMode || 'nearest').toLowerCase() === 'all'
-    ? 'all'
-    : 'nearest';
-  const requestedGammaCalculationMode = String(gamma_calculation_mode || gammaCalculationMode || 'institutional').toLowerCase() === 'near_open'
-    ? 'near_open'
-    : 'institutional';
-  const strictGammaOnly = Boolean(strict_real_gamma || strictRealGamma);
 
   if (!force) {
     if (!optionsFetchBlockedUntil) optionsFetchBlockedUntil = readBlockUntil(OPTIONS_BLOCK_UNTIL_KEY);
@@ -950,9 +768,6 @@ async function invokeGetGammaOI({ ticker, force_refresh, forceRefresh, expiratio
     return {
       ticker: t,
       source: 'unavailable',
-      gamma_calculation_mode: requestedGammaCalculationMode,
-      strict_real_gamma: strictGammaOnly,
-      requested_expiration_mode: requestedExpirationMode,
       call_wall: null,
       put_wall: null,
       gamma_level: null,
@@ -968,7 +783,7 @@ async function invokeGetGammaOI({ ticker, force_refresh, forceRefresh, expiratio
       strikes_analyzed: 0,
     };
   }
-  const barchartUrl = `/api/barchart/options?ticker=${encodeURIComponent(t)}&expiration=${requestedExpirationMode}`;
+  const barchartUrl = `/api/barchart/options?ticker=${encodeURIComponent(t)}`;
   const symbol = t.startsWith('^') ? t : `_${t}`;
   const cboeUrl = `/api/cboe/api/global/delayed_quotes/options/${symbol}.json`;
 
@@ -982,28 +797,19 @@ async function invokeGetGammaOI({ ticker, force_refresh, forceRefresh, expiratio
       const bcJson = await bcRes.json();
       const callRows = Array.isArray(bcJson?.data?.Call) ? bcJson.data.Call : [];
       const putRows = Array.isArray(bcJson?.data?.Put) ? bcJson.data.Put : [];
-      const bcExp = bcJson?.meta?.expirations;
-      if (Array.isArray(bcExp)) {
-        optionsExpiration = bcExp[0] || null;
-      } else if (bcExp && typeof bcExp === 'object') {
-        const weeklyFirst = Array.isArray(bcExp.weekly) ? bcExp.weekly[0] : null;
-        const monthlyFirst = Array.isArray(bcExp.monthly) ? bcExp.monthly[0] : null;
-        optionsExpiration = weeklyFirst || monthlyFirst || null;
-      } else {
-        optionsExpiration = null;
-      }
+      optionsExpiration = bcJson?.meta?.expirations?.[0] || null;
       options = [
         ...callRows.map((o) => ({
-          open_interest: toLooseNumber(o?.openInterest) ?? 0,
-          volume: toLooseNumber(o?.volume) ?? 0,
-          strike_price: toLooseNumber(o?.strikePrice) ?? 0,
+          open_interest: Number(o?.openInterest || 0),
+          volume: Number(o?.volume || 0),
+          strike_price: Number(o?.strikePrice || 0),
           type: 'call',
           option: String(o?.symbol || ''),
         })),
         ...putRows.map((o) => ({
-          open_interest: toLooseNumber(o?.openInterest) ?? 0,
-          volume: toLooseNumber(o?.volume) ?? 0,
-          strike_price: toLooseNumber(o?.strikePrice) ?? 0,
+          open_interest: Number(o?.openInterest || 0),
+          volume: Number(o?.volume || 0),
+          strike_price: Number(o?.strikePrice || 0),
           type: 'put',
           option: String(o?.symbol || ''),
         })),
@@ -1064,8 +870,8 @@ async function invokeGetGammaOI({ ticker, force_refresh, forceRefresh, expiratio
     }
   }
 
-  let callWallInstitutional = null;
-  let putWallInstitutional = null;
+  let callWall = null;
+  let putWall = null;
   let maxCall = -1;
   let maxPut = -1;
   let totalCall = 0;
@@ -1073,9 +879,9 @@ async function invokeGetGammaOI({ ticker, force_refresh, forceRefresh, expiratio
   let totalCallVolume = 0;
   let totalPutVolume = 0;
   for (const opt of options) {
-    const oi = toLooseNumber(opt?.open_interest) ?? 0;
-    const vol = toLooseNumber(opt?.volume) ?? 0;
-    const strike = toLooseNumber(opt?.strike_price ?? opt?.strike) ?? 0;
+    const oi = Number(opt?.open_interest || 0);
+    const vol = Number(opt?.volume || 0);
+    const strike = Number(opt?.strike_price ?? opt?.strike ?? 0);
     if (!strike) continue;
     const type = (opt?.type || '').toLowerCase();
     const code = String(opt?.option || '');
@@ -1086,7 +892,7 @@ async function invokeGetGammaOI({ ticker, force_refresh, forceRefresh, expiratio
       totalCallVolume += vol;
       if (oi > maxCall) {
         maxCall = oi;
-        callWallInstitutional = strike;
+        callWall = strike;
       }
     }
     if (isPut) {
@@ -1094,25 +900,19 @@ async function invokeGetGammaOI({ ticker, force_refresh, forceRefresh, expiratio
       totalPutVolume += vol;
       if (oi > maxPut) {
         maxPut = oi;
-        putWallInstitutional = strike;
+        putWall = strike;
       }
     }
   }
 
-  const institutionalWalls = getWallsFromOptionRows(options);
-  callWallInstitutional = institutionalWalls.callWall ?? callWallInstitutional;
-  putWallInstitutional = institutionalWalls.putWall ?? putWallInstitutional;
-
-  const gammaLevelInstitutional = callWallInstitutional && putWallInstitutional
-    ? Number(((callWallInstitutional + putWallInstitutional) / 2).toFixed(2))
-    : null;
+  const gamma_level = callWall && putWall ? Number(((callWall + putWall) / 2).toFixed(2)) : null;
 
   // Key strikes by total OI (call + put)
   const strikeMap = new Map();
   for (const opt of options) {
-    const strike = toLooseNumber(opt?.strike_price ?? opt?.strike) ?? 0;
-    const oi = toLooseNumber(opt?.open_interest) ?? 0;
-    const vol = toLooseNumber(opt?.volume) ?? 0;
+    const strike = Number(opt?.strike_price ?? opt?.strike ?? 0);
+    const oi = Number(opt?.open_interest || 0);
+    const vol = Number(opt?.volume || 0);
     if (!strike || (!oi && !vol)) continue;
 
     const code = String(opt?.option || '');
@@ -1154,8 +954,7 @@ async function invokeGetGammaOI({ ticker, force_refresh, forceRefresh, expiratio
     .sort((a, b) => a.strike - b.strike);
   const spotNow = await invokeGetStockPrice({ ticker: t }).catch(() => null);
   const spotRef = toNum(spotNow?.current_price);
-  const marketOpenRef = toLooseNumber(spotNow?.today_open ?? spotNow?.open);
-  const ref = spotRef || gammaLevelInstitutional || (callWallInstitutional && putWallInstitutional ? (callWallInstitutional + putWallInstitutional) / 2 : null);
+  const ref = spotRef || gamma_level || (callWall && putWall ? (callWall + putWall) / 2 : null);
   let key_strikes;
   if (ref && allStrikeRows.length > 0) {
     key_strikes = allStrikeRows
@@ -1173,42 +972,6 @@ async function invokeGetGammaOI({ ticker, force_refresh, forceRefresh, expiratio
       .slice(0, 7);
   }
 
-  const nearOpenRef = marketOpenRef ?? spotRef;
-  const callOpenCandidates = allStrikeRows.filter((row) => Number(row.call_oi || 0) > 0);
-  const putOpenCandidates = allStrikeRows.filter((row) => Number(row.put_oi || 0) > 0);
-  const callWallNearOpen = nearOpenRef != null && callOpenCandidates.length > 0
-    ? callOpenCandidates
-      .slice()
-      .sort((a, b) => {
-        const distA = Math.abs(a.strike - nearOpenRef);
-        const distB = Math.abs(b.strike - nearOpenRef);
-        if (distA !== distB) return distA - distB;
-        return (b.call_oi || 0) - (a.call_oi || 0);
-      })[0]?.strike ?? null
-    : null;
-  const putWallNearOpen = nearOpenRef != null && putOpenCandidates.length > 0
-    ? putOpenCandidates
-      .slice()
-      .sort((a, b) => {
-        const distA = Math.abs(a.strike - nearOpenRef);
-        const distB = Math.abs(b.strike - nearOpenRef);
-        if (distA !== distB) return distA - distB;
-        return (b.put_oi || 0) - (a.put_oi || 0);
-      })[0]?.strike ?? null
-    : null;
-  const gammaLevelNearOpen = callWallNearOpen && putWallNearOpen
-    ? Number(((callWallNearOpen + putWallNearOpen) / 2).toFixed(2))
-    : null;
-
-  let selectedCallWall = callWallInstitutional;
-  let selectedPutWall = putWallInstitutional;
-  let selectedGammaLevel = gammaLevelInstitutional;
-  if (requestedGammaCalculationMode === 'near_open' && callWallNearOpen && putWallNearOpen && gammaLevelNearOpen) {
-    selectedCallWall = callWallNearOpen;
-    selectedPutWall = putWallNearOpen;
-    selectedGammaLevel = gammaLevelNearOpen;
-  }
-
   const netOi = totalCall + totalPut;
   const gexBias = totalCall - totalPut;
   const gexPct = netOi > 0 ? Number(((gexBias / netOi) * 100).toFixed(1)) : 0;
@@ -1216,24 +979,8 @@ async function invokeGetGammaOI({ ticker, force_refresh, forceRefresh, expiratio
     ? `${gexBias >= 0 ? '+' : ''}${gexPct}% (estimado por OI neto)`
     : 'N/A';
 
-  const institutionalGex = calculateInstitutionalGex(options, spotRef, strictGammaOnly);
-  const gexTotal = institutionalGex.totalGex;
-  const gammaFlip = institutionalGex.gammaFlip;
-  const gexRegime = gexTotal == null
-    ? 'UNKNOWN'
-    : gexTotal >= 0
-      ? 'POSITIVE_GEX_RANGE'
-      : 'NEGATIVE_GEX_TREND';
-  const marketRegimeByFlip = gammaFlip == null || spotRef == null || gexTotal == null
-    ? 'UNKNOWN'
-    : (spotRef > gammaFlip && gexTotal > 0)
-      ? 'RANGE'
-      : (spotRef < gammaFlip && gexTotal < 0)
-        ? 'TREND'
-        : 'MIXED';
-
   // If options providers are blocked, synthesize levels from spot price so UI never stays empty.
-  if ((!selectedCallWall || !selectedPutWall || !selectedGammaLevel) && options.length === 0) {
+  if ((!callWall || !putWall || !gamma_level) && options.length === 0) {
     const spot = await invokeGetStockPrice({ ticker: t }).catch(() => null);
     const px = toNum(spot?.current_price);
     if (px != null) {
@@ -1258,32 +1005,10 @@ async function invokeGetGammaOI({ ticker, force_refresh, forceRefresh, expiratio
       return {
         ticker: t,
         source: 'estimated_from_spot',
-        gamma_calculation_mode: requestedGammaCalculationMode,
-        strict_real_gamma: strictGammaOnly,
-        requested_expiration_mode: requestedExpirationMode,
         options_expiration: null,
         call_wall: callEst,
         put_wall: putEst,
         gamma_level: gLvl,
-        call_wall_institutional: callEst,
-        put_wall_institutional: putEst,
-        gamma_level_institutional: gLvl,
-        call_wall_near_open: callEst,
-        put_wall_near_open: putEst,
-        gamma_level_near_open: gLvl,
-        gamma_flip: gLvl,
-        gex_total: null,
-        gex_total_by_formula: null,
-        gex_by_strike: {},
-        cumulative_gex_by_strike: {},
-        gex_regime: 'UNKNOWN',
-        gex_market_mode: 'UNKNOWN',
-        vol_gex: null,
-        delta_exposure: null,
-        gex_0dte: null,
-        gex_ex_0dte: null,
-        gex_estimated_gamma_count: 0,
-        gex_direct_gamma_count: 0,
         max_pain: gLvl,
         gamma_exposure: 'N/A (fuentes de opciones bloqueadas)',
         open_interest_total: 0,
@@ -1309,18 +1034,18 @@ async function invokeGetGammaOI({ ticker, force_refresh, forceRefresh, expiratio
     const s = String(o?.option || '');
     return (o?.type || '').toLowerCase() === 'put' || (/P\d{6,}/.test(s) && !/C\d{6,}/.test(s));
   });
-  const allStrikes = [...new Set(options.map((o) => toLooseNumber(o?.strike_price ?? o?.strike)).filter((s) => Number.isFinite(s) && s > 0))].sort((a, b) => a - b);
+  const allStrikes = [...new Set(options.map((o) => Number(o?.strike_price ?? o?.strike ?? 0)).filter((s) => Number.isFinite(s) && s > 0))].sort((a, b) => a - b);
   let max_pain = null;
   if (allStrikes.length > 0) {
     let minLoss = Infinity;
     allStrikes.forEach((testStrike) => {
       let loss = 0;
       callOpts.forEach((c) => {
-        const cStrike = toLooseNumber(c?.strike_price ?? c?.strike) ?? 0;
+        const cStrike = Number(c?.strike_price ?? c?.strike ?? 0);
         if (cStrike > 0 && cStrike < testStrike) loss += (c.open_interest ?? 0) * (testStrike - cStrike);
       });
       putOpts.forEach((p) => {
-        const pStrike = toLooseNumber(p?.strike_price ?? p?.strike) ?? 0;
+        const pStrike = Number(p?.strike_price ?? p?.strike ?? 0);
         if (pStrike > 0 && pStrike > testStrike) loss += (p.open_interest ?? 0) * (pStrike - testStrike);
       });
       if (loss < minLoss) { minLoss = loss; max_pain = testStrike; }
@@ -1330,34 +1055,11 @@ async function invokeGetGammaOI({ ticker, force_refresh, forceRefresh, expiratio
   return {
     ticker: t,
     source,
-    gamma_calculation_mode: requestedGammaCalculationMode,
-    strict_real_gamma: strictGammaOnly,
-    requested_expiration_mode: requestedExpirationMode,
     options_expiration: optionsExpiration,
-    call_wall: selectedCallWall,
-    put_wall: selectedPutWall,
-    gamma_level: selectedGammaLevel,
-    call_wall_institutional: callWallInstitutional,
-    put_wall_institutional: putWallInstitutional,
-    gamma_level_institutional: gammaLevelInstitutional,
-    call_wall_near_open: callWallNearOpen,
-    put_wall_near_open: putWallNearOpen,
-    gamma_level_near_open: gammaLevelNearOpen,
-    market_open_reference: nearOpenRef,
-    gamma_flip: gammaFlip,
-    gex_total: gexTotal,
-    gex_total_by_formula: gexTotal,
-    gex_by_strike: institutionalGex.gexByStrike,
-    cumulative_gex_by_strike: institutionalGex.cumulativeByStrike,
-    gex_regime: gexRegime,
-    gex_market_mode: marketRegimeByFlip,
-    vol_gex: institutionalGex.volGex,
-    delta_exposure: institutionalGex.deltaExposure,
-    gex_0dte: institutionalGex.gex0dte,
-    gex_ex_0dte: institutionalGex.gexEx0dte,
-    gex_estimated_gamma_count: institutionalGex.gexEstimatedCount,
-    gex_direct_gamma_count: institutionalGex.gexDirectCount,
-    max_pain: max_pain ?? selectedGammaLevel,
+    call_wall: callWall,
+    put_wall: putWall,
+    gamma_level,
+    max_pain: max_pain ?? gamma_level,
     gamma_exposure,
     open_interest_total: netOi,
     key_strikes,

@@ -1,6 +1,9 @@
 export default async function handler(req, res) {
   const targetBase = 'https://query1.finance.yahoo.com';
-  const path = req.url.replace(/^\/api\/yahoo/, '') || '/';
+  let path = req.url.replace(/^\/api\/yahoo/, '') || '/';
+
+  // /chart/:ticker → /v8/finance/chart/:ticker (compat con server.js)
+  path = path.replace(/^\/chart\//, '/v8/finance/chart/');
 
   try {
     const targetUrl = `${targetBase}${path}`;

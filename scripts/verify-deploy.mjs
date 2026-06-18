@@ -34,7 +34,8 @@ const merged = {
 const errors = [];
 const warnings = [];
 
-const openrouterKey = merged.VITE_OPENROUTER_API_KEY;
+// Accept VITE_OPENROUTER_API_KEY or OPENROUTER_API_KEY (Vercel sets the non-VITE variant)
+const openrouterKey = merged.VITE_OPENROUTER_API_KEY || merged.OPENROUTER_API_KEY;
 if (isPlaceholder(openrouterKey)) {
   errors.push('Falta VITE_OPENROUTER_API_KEY (o es placeholder).');
 }

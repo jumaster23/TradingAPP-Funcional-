@@ -36,7 +36,6 @@ for col in feature_columns:
 df = df[feature_columns]
 df = df.apply(pd.to_numeric, errors="coerce").fillna(0.0)
 
-prob = model.predict_proba(df)[0][1]
 probs = {}
 for name, model in models.items():
     probs[name] = float(model.predict_proba(df)[0][1])

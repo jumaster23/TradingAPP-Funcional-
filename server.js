@@ -1,344 +1,176 @@
-/**
- * server.js — Servidor de producción para Trading Bot Híbrido
- *
- * Reemplaza los middlewares/proxies de Vite que solo funcionan en modo dev.
- * Sirve el build estático (dist/) + maneja todas las rutas /api/*.
- *
- * Uso:
- *   npm run build
- *   node server.js            (puerto 4173 por defecto)
- *   PORT=8080 node server.js  (puerto custom)
- */
-
+// ─── IMPORTS Y CONFIGURACIÓN ───────────────────────────────────────────────
 import express from 'express';
-import { promises as fs } from 'node:fs';
-import { execFileSync } from 'node:child_process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import fs from 'fs';
+import path from 'path';
+import fetch from 'node-fetch';
+import { fileURLToPath } from 'url';
+import { spawnSync } from 'child_process';
+import cheerio from 'cheerio'; // Para Node.js 20+ y ES Modules: npm install cheerio@^1.0.0-rc.12
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DIST_DIR = path.join(__dirname, 'dist');
-const DATASET_FILE = path.join(__dirname, 'dataset.json');
-const TRAIN_META_FILE = path.join(__dirname, '.ml-train-meta.json');
-const TRAIN_MIN_SAMPLES = 500;
-const TRAIN_INTERVAL_MS = 24 * 60 * 60 * 1000;
-
-// Puerto: Render/Vercel usan PORT, fallback a 4173 para localhost
-const PORT = Number(process.env.PORT || process.env.SERVER_PORT || 4173);
-const NODE_ENV = process.env.NODE_ENV || 'development';
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-async function readJsonFile(filePath, fallback) {
-  try {
-    const raw = await fs.readFile(filePath, 'utf-8');
-    return JSON.parse(raw);
-  } catch {
-    return fallback;
-  }
-}
-
-async function writeJsonFile(filePath, data) {
-  await fs.writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
-}
-
-async function fileExists(filePath) {
-  try { await fs.access(filePath); return true; } catch { return false; }
-}
-
-function buildCookieHeader(setCookieValues = []) {
-  if (!Array.isArray(setCookieValues) || setCookieValues.length === 0) return '';
-  return setCookieValues
-    .map((v) => String(v || '').split(';')[0])
-    .filter(Boolean)
-    .join('; ');
-}
-
-function extractCsrfToken(html) {
-  const match = String(html || '').match(/<meta\s+name="csrf-token"\s+content="([^"]+)"/i);
-  return match?.[1] || '';
-}
-
-function runSimpleTrainModel() {
-  return execFileSync('python', ['train_model.py'], { encoding: 'utf-8', cwd: __dirname });
-}
-
-function runSimplePredict(features) {
-  const input = JSON.stringify(features || {});
-  const raw = execFileSync('python', ['predict.py', input], {
-    encoding: 'utf-8',
-    cwd: __dirname,
-  }).trim();
-  const prob = Number.parseFloat(raw);
-  if (!Number.isFinite(prob)) throw new Error(`Output de predict.py inválido: ${raw}`);
-  return prob;
-}
-
-/**
- * Proxy genérico: reescribe la URL, reenvía todos los headers del cliente
- * más los headers extra indicados, y devuelve la respuesta tal cual.
- */
-async function genericProxy(req, res, targetBase, pathRewriteFn, extraHeaders = {}) {
-  try {
-    const originalUrl = req.url || '/';
-    const [rawPath, rawQuery] = originalUrl.split('?');
-    const rewrittenPath = pathRewriteFn(rawPath);
-    const targetUrl = `${targetBase}${rewrittenPath}${rawQuery ? `?${rawQuery}` : ''}`;
-
-    // Construir headers seguros para reenviar (evitar headers hop-by-hop)
-    const hopByHop = new Set([
-      'host', 'connection', 'keep-alive', 'proxy-authenticate',
-      'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade',
-    ]);
-    const forwardHeaders = {};
-    for (const [key, value] of Object.entries(req.headers)) {
-      if (!hopByHop.has(key.toLowerCase())) {
-        forwardHeaders[key] = value;
-      }
-    }
-
-    const proxyRes = await fetch(targetUrl, {
-      method: req.method,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        ...forwardHeaders,
-        ...extraHeaders,
-      },
-    });
-
-    const body = await proxyRes.arrayBuffer();
-    const ct = proxyRes.headers.get('content-type') || 'application/octet-stream';
-    res.status(proxyRes.status).setHeader('Content-Type', ct).send(Buffer.from(body));
-  } catch (err) {
-    res.status(502).json({ error: 'proxy_error', message: String(err?.message || err) });
-  }
-}
-
-// ─── App ──────────────────────────────────────────────────────────────────────
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json());
 
-// ─── Proxy: Yahoo Finance ─────────────────────────────────────────────────────
+const PORT = process.env.PORT || 3001;
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const DIST_DIR = path.join(__dirname, 'dist');
+const DATASET_FILE = path.join(__dirname, 'dataset.json');
+const TRAIN_META_FILE = path.join(__dirname, 'ml', 'train_meta.json');
+const TRAIN_MIN_SAMPLES = 20;
+const TRAIN_INTERVAL_MS = 1000 * 60 * 10;
 
-app.use('/api/yahoo', (req, res) => {
-  genericProxy(req, res, 'https://query1.finance.yahoo.com',
-    (p) => p.replace(/^\/api\/yahoo/, ''));
-});
-
-// ─── Proxy: CBOE ─────────────────────────────────────────────────────────────
-
-app.use('/api/cboe', (req, res) => {
-  genericProxy(req, res, 'https://cdn.cboe.com',
-    (p) => p.replace(/^\/api\/cboe/, ''), {
-      'Referer': 'https://www.cboe.com/',
-      'Origin': 'https://www.cboe.com',
-      'Accept': 'application/json',
-    });
-});
-
-// ─── Proxy: Alpaca ────────────────────────────────────────────────────────────
-
-app.use('/api/alpaca', (req, res) => {
-  // Los headers de auth Alpaca (APCA-API-KEY-ID / APCA-API-SECRET-KEY)
-  // se envían desde el cliente (base44Client.js) y se reenvían aquí.
-  genericProxy(req, res, 'https://data.alpaca.markets',
-    (p) => p.replace(/^\/api\/alpaca/, ''));
-});
-
-// ─── Proxy: Noticias ─────────────────────────────────────────────────────────
-
-app.use('/api/news/google', (req, res) => {
-  genericProxy(req, res, 'https://news.google.com',
-    (p) => p.replace(/^\/api\/news\/google/, ''));
-});
-
-app.use('/api/news/yahoo', (req, res) => {
-  genericProxy(req, res, 'https://feeds.finance.yahoo.com',
-    (p) => p.replace(/^\/api\/news\/yahoo/, ''));
-});
-
-app.use('/api/news/mw', (req, res) => {
-  genericProxy(req, res, 'https://feeds.content.dowjones.io',
-    (p) => p.replace(/^\/api\/news\/mw/, ''));
-});
-
-app.use('/api/news/ff', (req, res) => {
-  genericProxy(req, res, 'https://nfs.faireconomy.media',
-    (p) => p.replace(/^\/api\/news\/ff/, ''));
-});
-
-// ─── Barchart Options (scraper personalizado) ─────────────────────────────────
-
-app.get('/api/barchart/options', async (req, res) => {
+// Helpers
+async function fileExists(file) {
   try {
-    const ticker = String(req.query.ticker || '').toUpperCase().trim();
-    const expiration = String(req.query.expiration || 'nearest').toLowerCase() === 'all' ? 'all' : 'nearest';
-    if (!ticker) {
-      return res.status(400).json({ error: 'ticker requerido' });
-    }
+    await fs.promises.access(file, fs.constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-    const pageUrl = `https://www.barchart.com/stocks/quotes/${encodeURIComponent(ticker)}/options`;
-    const commonHeaders = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Accept-Language': 'en-US,en;q=0.9',
-    };
-
-    const pageRes = await fetch(pageUrl, { headers: commonHeaders });
-    if (!pageRes.ok) {
-      return res.status(502).json({ error: `barchart_page_${pageRes.status}` });
-    }
-
-    const pageHtml = await pageRes.text();
-    const csrf = extractCsrfToken(pageHtml);
-    const setCookies = pageRes.headers.getSetCookie?.() || [];
-    const cookieHeader = buildCookieHeader(setCookies);
-
-    const apiUrl = new URL('https://www.barchart.com/proxies/core-api/v1/options/get');
-    apiUrl.searchParams.set('baseSymbol', ticker);
-    apiUrl.searchParams.set('groupBy', 'optionType');
-    apiUrl.searchParams.set('expirationDate', expiration);
-    apiUrl.searchParams.set('orderBy', 'strikePrice');
-    apiUrl.searchParams.set('orderDir', 'asc');
-    apiUrl.searchParams.set('meta', 'field.shortName,expirations');
-    apiUrl.searchParams.set('fields', 'symbol,baseSymbol,strikePrice,optionType,volume,openInterest,tradeTime');
-
-    const apiRes = await fetch(apiUrl.toString(), {
+// ─── ENDPOINT: Proxy Barchart Options ──────────────────────────────────────
+app.get('/api/barchart/options', async (req, res) => {
+  const ticker = req.query.ticker;
+  if (!ticker) return res.status(400).json({ error: 'ticker_required' });
+  try {
+    // URL pública de Barchart para opciones (puedes cambiar por tu API KEY si tienes una)
+    const url = `https://www.barchart.com/proxies/core-api/v1/options/get?symbol=${encodeURIComponent(ticker)}&fields=symbol,strikePrice,openInterest,volume,expirationDate,type`;
+    const response = await fetch(url, {
       headers: {
-        ...commonHeaders,
-        Accept: 'application/json, text/plain, */*',
-        Referer: pageUrl,
-        'X-Requested-With': 'XMLHttpRequest',
-        ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
-        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+        'Accept': 'application/json',
+        // 'apikey': process.env.BARCHART_API_KEY, // Si tienes API KEY
       },
     });
-
-    const body = await apiRes.text();
-    res
-      .status(apiRes.ok ? 200 : 502)
-      .setHeader('Content-Type', 'application/json')
-      .send(body);
+    if (!response.ok) throw new Error('barchart_fetch_error');
+    const data = await response.json();
+    res.json({ ok: true, data: data.data || [], meta: data.meta || {} });
   } catch (err) {
     res.status(500).json({ error: 'barchart_proxy_error', message: String(err?.message || err) });
   }
 });
 
-// ─── ML: Dataset append ───────────────────────────────────────────────────────
-
-app.post('/api/ml/dataset/append', async (req, res) => {
+// ─── ENDPOINT: Opciones Yahoo Finance ─────────────────────────────────────
+app.get('/api/options/yahoo', async (req, res) => {
+  const ticker = req.query.ticker;
+  if (!ticker) return res.status(400).json({ error: 'ticker_required' });
   try {
-    const sample = req.body;
-    if (!sample || typeof sample !== 'object' || Array.isArray(sample)) {
-      return res.status(400).json({ error: 'invalid_payload' });
-    }
-
-    const rows = await readJsonFile(DATASET_FILE, []);
-    const dataset = Array.isArray(rows) ? rows : [];
-
-    const sampleId = String(sample?.id ?? '');
-    const sampleTs = String(sample?.timestamp ?? '');
-    const exists = dataset.some(
-      (row) => String(row?.id ?? '') === sampleId && String(row?.timestamp ?? '') === sampleTs,
-    );
-    if (!exists) dataset.push(sample);
-    await writeJsonFile(DATASET_FILE, dataset);
-
-    let trained = false;
-    let trainInfo = null;
-    const labeledCount = dataset.filter(
-      (row) => row && (Number(row.result) === 0 || Number(row.result) === 1),
-    ).length;
-
-    if (labeledCount >= TRAIN_MIN_SAMPLES) {
-      const meta = await readJsonFile(TRAIN_META_FILE, { lastTrainedAt: 0 });
-      const lastTrainedAt = Number(meta?.lastTrainedAt || 0);
-      if (Date.now() - lastTrainedAt >= TRAIN_INTERVAL_MS) {
-        const output = runSimpleTrainModel();
-        trained = true;
-        trainInfo = { output: String(output || '').trim() };
-        await writeJsonFile(TRAIN_META_FILE, { lastTrainedAt: Date.now(), labeledCount });
-      }
-    }
-
-    res.json({
-      ok: true,
-      inserted: !exists,
-      dataset_size: dataset.length,
-      labeled_size: labeledCount,
-      trained,
-      train_info: trainInfo,
+    // Yahoo Finance options endpoint
+    const url = `https://query2.finance.yahoo.com/v7/finance/options/${encodeURIComponent(ticker)}`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'application/json',
+      },
     });
-  } catch (err) {
-    res.status(500).json({ error: 'ml_dataset_append_error', message: String(err?.message || err) });
-  }
-});
-
-// ─── ML: Status ───────────────────────────────────────────────────────────────
-
-app.get('/api/ml/status', async (req, res) => {
-  try {
-    const rows = await readJsonFile(DATASET_FILE, []);
-    const dataset = Array.isArray(rows) ? rows : [];
-    const labeledCount = dataset.filter(
-      (row) => row && (Number(row.result) === 0 || Number(row.result) === 1),
-    ).length;
-    const meta = await readJsonFile(TRAIN_META_FILE, { lastTrainedAt: 0 });
-    const hasModel = await fileExists(path.join(__dirname, 'model.pkl'));
-
-    res.json({
-      ok: true,
-      dataset_size: dataset.length,
-      labeled_size: labeledCount,
-      train_min_samples: TRAIN_MIN_SAMPLES,
-      last_trained_at: Number(meta?.lastTrainedAt || 0),
-      has_model: hasModel,
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'ml_status_error', message: String(err?.message || err) });
-  }
-});
-
-// ─── ML: Entrenar ─────────────────────────────────────────────────────────────
-
-app.post('/api/ml/train', async (req, res) => {
-  try {
-    const rows = await readJsonFile(DATASET_FILE, []);
-    const dataset = Array.isArray(rows) ? rows : [];
-    const labeledCount = dataset.filter(
-      (row) => row && (Number(row.result) === 0 || Number(row.result) === 1),
-    ).length;
-
-    if (labeledCount === 0) {
-      return res.status(400).json({
-        error: 'dataset_empty',
-        message: 'dataset.json no tiene muestras etiquetadas (result=0/1).',
-        dataset_size: dataset.length,
-        labeled_size: labeledCount,
+    if (!response.ok) throw new Error('yahoo_fetch_error');
+    const data = await response.json();
+    // Extraer strikes y open interest
+    const result = [];
+    const options = data?.optionChain?.result?.[0]?.options || [];
+    options.forEach(opt => {
+      ['calls', 'puts'].forEach(type => {
+        (opt[type] || []).forEach(item => {
+          result.push({
+            type,
+            contractSymbol: item.contractSymbol,
+            strike: item.strike,
+            expiration: item.expiration,
+            openInterest: item.openInterest,
+            volume: item.volume,
+            lastPrice: item.lastPrice,
+          });
+        });
       });
-    }
-
-    const output = runSimpleTrainModel();
-    await writeJsonFile(TRAIN_META_FILE, { lastTrainedAt: Date.now(), labeledCount });
-    res.json({ ok: true, output: String(output || '').trim() });
+    });
+    res.json({ ok: true, data: result });
   } catch (err) {
-    res.status(500).json({ error: 'ml_train_error', message: String(err?.message || err) });
+    res.status(500).json({ error: 'yahoo_proxy_error', message: String(err?.message || err) });
   }
 });
 
-// ─── ML: Predecir ─────────────────────────────────────────────────────────────
+// ─── ENDPOINT: Opciones Barchart (estructura) ─────────────────────────────
+app.get('/api/options/barchart', async (req, res) => {
+  const ticker = req.query.ticker;
+  if (!ticker) return res.status(400).json({ error: 'ticker_required' });
+  // Aquí deberías implementar la lógica real con tu API Key o scraping
+  res.status(501).json({ error: 'not_implemented', message: 'Integración Barchart pendiente. Requiere API Key o scraping.' });
+});
 
-app.post('/api/ml/predict', async (req, res) => {
+// ─── ENDPOINT: Scraping Barchart Opciones y Gamma ─────────────────────────
+app.get('/api/options/barchart-scrape', async (req, res) => {
+  const ticker = req.query.ticker;
+  if (!ticker) return res.status(400).json({ error: 'ticker_required' });
   try {
-    const payload = req.body;
-    const features =
-      payload?.features && typeof payload.features === 'object'
-        ? payload.features
-        : payload;
-    const probability = runSimplePredict(features);
-    res.json({ ok: true, probability });
+    // URL de la tabla de opciones de Barchart (calls y puts)
+    const url = `https://www.barchart.com/stocks/quotes/${encodeURIComponent(ticker)}/options`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'text/html',
+      },
+    });
+    if (!response.ok) throw new Error('barchart_scrape_error');
+    const html = await response.text();
+    const $ = cheerio.load(html);
+    const data = [];
+    // Scraping de la tabla principal de opciones (calls y puts)
+    $('table.bc-table-scrollable tbody tr').each((i, el) => {
+      const tds = $(el).find('td');
+      if (tds.length > 10) {
+        const strike = parseFloat($(tds[10]).text().replace(/[$,]/g, ''));
+        const callOpenInterest = parseInt($(tds[5]).text().replace(/,/g, ''));
+        const putOpenInterest = parseInt($(tds[16]).text().replace(/,/g, ''));
+        data.push({
+          strike,
+          callOpenInterest: isNaN(callOpenInterest) ? null : callOpenInterest,
+          putOpenInterest: isNaN(putOpenInterest) ? null : putOpenInterest,
+        });
+      }
+    });
+    // Cálculo de niveles gamma (simplificado: diferencia de OI calls-puts por strike)
+    const gammaLevels = data.map(row => ({
+      strike: row.strike,
+      gamma: (row.callOpenInterest || 0) - (row.putOpenInterest || 0)
+    }));
+    res.json({ ok: true, data, gammaLevels });
   } catch (err) {
-    res.status(500).json({ error: 'ml_predict_error', message: String(err?.message || err) });
+    res.status(500).json({ error: 'barchart_scrape_error', message: String(err?.message || err) });
+  }
+});
+
+// ─── ENDPOINT: TipRanks (estructura) ───────────────────────────────────────
+app.get('/api/tipranks/summary', async (req, res) => {
+  const ticker = req.query.ticker;
+  if (!ticker) return res.status(400).json({ error: 'ticker_required' });
+  // Aquí deberías implementar la lógica real con scraping o API Key de TipRanks
+  res.status(501).json({ error: 'not_implemented', message: 'Integración TipRanks pendiente. Requiere API Key o scraping.' });
+});
+
+// ─── ENDPOINT: Finviz (estructura) ─────────────────────────────────────────
+app.get('/api/finviz/summary', async (req, res) => {
+  const ticker = req.query.ticker;
+  if (!ticker) return res.status(400).json({ error: 'ticker_required' });
+  // Aquí deberías implementar la lógica real con scraping o API Key de Finviz
+  res.status(501).json({ error: 'not_implemented', message: 'Integración Finviz pendiente. Requiere API Key o scraping.' });
+});
+
+// ─── ENDPOINT: Proxy Yahoo Finance Chart (CORS bypass) ─────────────────────
+app.get('/api/yahoo/chart/:ticker', async (req, res) => {
+  let { ticker } = req.params;
+  const { interval = '1m', range = '1d' } = req.query;
+  ticker = decodeURIComponent(ticker);
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=${interval}&range=${range}`;
+  try {
+    const response = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener datos de Yahoo', details: err.message });
   }
 });
 
@@ -353,8 +185,8 @@ if (!(await fileExists(DIST_DIR))) {
 
 app.use(express.static(DIST_DIR));
 
-// SPA fallback: cualquier ruta no-API devuelve index.html
-app.get('*', (req, res) => {
+// SPA fallback: solo rutas que NO sean de API
+app.get(/^\/(?!api\/).*/, (req, res) => {
   res.sendFile(path.join(DIST_DIR, 'index.html'));
 });
 
@@ -382,3 +214,4 @@ process.on('SIGINT', () => {
     server.close(() => process.exit(0));
   }
 });
+

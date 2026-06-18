@@ -48,7 +48,42 @@
  * The mainPage value must match a key in the PAGES object exactly.
  */
 
+import Probabilities from './pages/Probabilities';
+import DayTrading from './pages/DayTrading';
+import Live from './pages/Live';
+import Live2 from './pages/Live2';
+import Live3 from './pages/Live3';
+import Live4 from './pages/Live4';
+import News from './pages/News';
+import Swing from './pages/Swing';
+import Institutional from './pages/Institutional';
+import BotSettings from './pages/BotSettings';
+import Journal from './pages/Journal';
+import Library from './pages/Library';
+import Backtest from './pages/Backtest';
+import Leaps from './pages/Leaps';
+import TradeHistory from './pages/TradeHistory';
+
+export const PAGES = {
+	Probabilities,
+	DayTrading,
+	Live,
+	Live2,
+	Live3,
+	Live4,
+	News,
+	Swing,
+	Institutional,
+	BotSettings,
+	Journal,
+	Library,
+	Backtest,
+	Leaps,
+	TradeHistory,
+};
+
 export const pagesConfig = {
-	Pages: {}
-}
+	mainPage: "Probabilities",
+	Pages: PAGES,
+};
 

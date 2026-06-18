@@ -27,18 +27,22 @@ export default function ProbabilityBar({ label, successPercent, className, tone 
         <div className="flex-1 h-6 rounded-full overflow-hidden bg-secondary flex">
           <div
             className={cn(
-              'h-full bg-gradient-to-r flex items-center justify-center text-[10px] font-bold text-white transition-all duration-700',
-              palette.successBar,
+              'h-full flex items-center justify-center text-[10px] font-bold transition-all duration-700',
+              'bg-emerald-500 text-white'
             )}
             style={{ width: `${successPercent}%` }}
           >
-            {successPercent >= 15 && `${successPercent.toFixed(0)}%`}
+            {successPercent >= 15 && (
+              <span className="text-emerald-100">{successPercent.toFixed(0)}%</span>
+            )}
           </div>
           <div
-            className="h-full bg-gradient-to-r from-red-500 to-red-400 flex items-center justify-center text-[10px] font-bold text-white transition-all duration-700"
+            className="h-full flex items-center justify-center text-[10px] font-bold transition-all duration-700 bg-red-500 text-white"
             style={{ width: `${failPercent}%` }}
           >
-            {failPercent >= 15 && `${failPercent.toFixed(0)}%`}
+            {failPercent >= 15 && (
+              <span className="text-red-100">{failPercent.toFixed(0)}%</span>
+            )}
           </div>
         </div>
       </div>
