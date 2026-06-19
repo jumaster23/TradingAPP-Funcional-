@@ -14,6 +14,7 @@ const tabs = [
   { path: '/DayTrading', label: 'Day Trading', icon: TrendingUp },
   { path: '/News', label: 'Noticias', icon: Newspaper },
   { path: '/Swing', label: 'Swing', icon: Waves },
+  { path: '/InstitutionalPro', label: 'Institucional Pro', icon: Building2 },
   { path: '/Institutional', label: 'Institucional', icon: Building2 },
   { path: '/BotSettings', label: 'Config', icon: Settings },
   { path: '/Journal', label: 'Journal', icon: BookOpen },

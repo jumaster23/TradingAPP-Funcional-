@@ -18,6 +18,7 @@ import Live4 from './pages/Live4';
 import News from './pages/News';
 import Swing from './pages/Swing';
 import Institutional from './pages/Institutional';
+import InstitutionalPro from './pages/InstitutionalPro';
 import BotSettings from './pages/BotSettings';
 import Journal from './pages/Journal';
 import Library from './pages/Library';
@@ -62,6 +63,7 @@ const AuthenticatedApp = () => {
         <Route path="/News" element={<News />} />
         <Route path="/Swing" element={<Swing />} />
         <Route path="/Institutional" element={<Institutional />} />
+        <Route path="/InstitutionalPro" element={<InstitutionalPro />} />
         <Route path="/BotSettings" element={<BotSettings />} />
         <Route path="/Journal" element={<Journal />} />
         <Route path="/Library" element={<Library />} />
