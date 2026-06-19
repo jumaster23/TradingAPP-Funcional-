@@ -12,6 +12,7 @@ import FlowScoreCard from '@/components/institutional/FlowScoreCard';
 import DashboardScore from '@/components/institutional/DashboardScore';
 import TradePlan from '@/components/institutional/TradePlan';
 import AlertPack from '@/components/institutional/AlertPack';
+import PriceChart from '@/components/institutional/PriceChart';
 
 // UI
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -501,6 +502,18 @@ export default function InstitutionalPro() {
                 />
               </div>
             </div>
+
+            {/* ── Price Chart ─────────────────────────────────────────── */}
+            <PriceChart
+              ticker={report.ticker || ticker.toUpperCase()}
+              interval="1h"
+              range="1mo"
+              height={420}
+              callWall={report.oiDistribution?.callWall}
+              putWall={report.oiDistribution?.putWall}
+              gammaFlip={report.gex?.gammaFlip}
+              maxPain={report.maxPain?.maxPainStrike}
+            />
 
             {/* ── B. Main Grid ───────────────────────────────────────────── */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
