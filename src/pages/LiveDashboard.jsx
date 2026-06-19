@@ -14,8 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
 import Live2 from './Live2';
-import Live3 from './Live3';
-import Live4 from './Live4';
+import PremarketScanner from '@/components/institutional/PremarketScanner';
 
 // ── Constantes ──
 const TICKERS = ['SPY', 'QQQ', 'NVDA', 'AAPL', 'MSFT', 'META', 'AMD', 'TSLA', 'GOOGL'];
@@ -480,26 +479,21 @@ export default function LiveDashboard() {
 
         {/* ── Tabs ── */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-          <TabsList className="grid grid-cols-4 w-full sm:w-auto sm:inline-flex">
+          <TabsList className="grid grid-cols-3 w-full sm:w-auto sm:inline-flex">
             <TabsTrigger value="consensus" className="gap-1.5">
               <Activity className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Consenso</span>
               <span className="sm:hidden">Consens.</span>
             </TabsTrigger>
+            <TabsTrigger value="premarket" className="gap-1.5">
+              <Shield className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Pre-Market</span>
+              <span className="sm:hidden">Pre-Mkt</span>
+            </TabsTrigger>
             <TabsTrigger value="live2" className="gap-1.5">
               <TrendingUp className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">ORB (Live2)</span>
+              <span className="hidden sm:inline">ORB Live</span>
               <span className="sm:hidden">ORB</span>
-            </TabsTrigger>
-            <TabsTrigger value="live3" className="gap-1.5">
-              <Zap className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Scalp (Live3)</span>
-              <span className="sm:hidden">Scalp</span>
-            </TabsTrigger>
-            <TabsTrigger value="live4" className="gap-1.5">
-              <Shield className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Smart Money (Live4)</span>
-              <span className="sm:hidden">Smart $</span>
             </TabsTrigger>
           </TabsList>
 
@@ -581,19 +575,14 @@ export default function LiveDashboard() {
             )}
           </TabsContent>
 
-          {/* ══ TAB: ORB (Live2) ══ */}
+          {/* ══ TAB: PRE-MARKET ══ */}
+          <TabsContent value="premarket" className="mt-0">
+            <PremarketScanner />
+          </TabsContent>
+
+          {/* ══ TAB: ORB LIVE ══ */}
           <TabsContent value="live2" className="mt-0">
             <Live2 />
-          </TabsContent>
-
-          {/* ══ TAB: SCALP (Live3) ══ */}
-          <TabsContent value="live3" className="mt-0">
-            <Live3 />
-          </TabsContent>
-
-          {/* ══ TAB: SMART MONEY (Live4) ══ */}
-          <TabsContent value="live4" className="mt-0">
-            <Live4 />
           </TabsContent>
         </Tabs>
 
