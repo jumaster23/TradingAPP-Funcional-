@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { createChart, ColorType, CrosshairMode, LineStyle } from 'lightweight-charts';
+import {
+  createChart, ColorType, CrosshairMode, LineStyle,
+  CandlestickSeries, LineSeries, HistogramSeries,
+} from 'lightweight-charts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Loader2, AlertTriangle } from 'lucide-react';
@@ -193,8 +196,8 @@ export default function PriceChart({
 
     chartRef.current = chart;
 
-    // Candlestick series
-    const candleSeries = chart.addCandlestickSeries({
+    // Candlestick series (v5 API: addSeries)
+    const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#10b981',
       downColor: '#ef4444',
       borderUpColor: '#10b981',
@@ -204,9 +207,9 @@ export default function PriceChart({
     });
     candleSeries.setData(candles);
 
-    // Volume histogram
+    // Volume histogram (v5 API: addSeries)
     if (showVolume) {
-      const volumeSeries = chart.addHistogramSeries({
+      const volumeSeries = chart.addSeries(HistogramSeries, {
         priceFormat: { type: 'volume' },
         priceScaleId: 'volume',
       });
@@ -224,7 +227,7 @@ export default function PriceChart({
 
     // EMA overlays
     if (ema20 && candles.length >= 20) {
-      const ema20Series = chart.addLineSeries({
+      const ema20Series = chart.addSeries(LineSeries, {
         color: '#f59e0b',
         lineWidth: 1,
         title: 'EMA 20',
@@ -233,7 +236,7 @@ export default function PriceChart({
     }
 
     if (ema50 && candles.length >= 50) {
-      const ema50Series = chart.addLineSeries({
+      const ema50Series = chart.addSeries(LineSeries, {
         color: '#6366f1',
         lineWidth: 1,
         title: 'EMA 50',
